@@ -1,0 +1,39 @@
+name: Mapas de barrios
+
+# Rearma los mapas de barrios con OpenStreetMap y Overture Maps y los publica en este repositorio
+# (GitHub Pages los sirve en https://pablo-maroto.github.io/conviene-mapas/). Una vez por mes, o a mano.
+# Necesita: Settings → Actions → General → Workflow permissions → "Read and write permissions".
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 4 * *" # día 4 de cada mes, 04:23 de Argentina
+
+jobs:
+  mapas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Herramientas
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+          pip install -q osmium shapely overturemaps
+      - name: Bajar OpenStreetMap de Argentina
+        run: curl -sSL --retry 3 -o /tmp/ar.osm.pbf https://download.geofabrik.de/south-america/argentina-latest.osm.pbf
+      - name: Quedarse con barrios, ciudades y límites
+        run: osmium tags-filter /tmp/ar.osm.pbf nwr/place=suburb,neighbourhood,quarter n/place=city,town wr/boundary=administrative -o /tmp/filtrado.osm.pbf
+      - name: Bajar Overture Maps de Argentina
+        run: overturemaps download --bbox=-73.6,-55.1,-53.6,-21.7 -f geojson --type=division_area -o /tmp/overture.geojson
+      - name: Armar los mapas
+        run: |
+          rm -rf /tmp/salida
+          python herramientas/mapas_barrios.py /tmp/filtrado.osm.pbf /tmp/overture.geojson /tmp/salida | tail -n 50
+          rm -rf barrios && mv /tmp/salida/barrios barrios && mv /tmp/salida/ciudades.json ciudades.json
+      - name: Publicar si cambió algo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A barrios ciudades.json
+          if git diff --cached --quiet; then echo "Sin cambios"; exit 0; fi
+          git commit -q -m "Mapas de barrios ($(date +%F))"
+          git push
